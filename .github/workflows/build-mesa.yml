@@ -1,48 +1,59 @@
-name: Build Mesa-Zink XFCE4
+name: Build Mesa-Zink 24.3.4
 
 on:
-  workflow_dispatch:
+workflow_dispatch:
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
+build:
+runs-on: ubuntu-latest
 
-    steps:
-      - name: Checkout termux-packages
-        run: git clone --depth 1 https://github.com/termux/termux-packages.git
+steps:
+  - name: Checkout termux-packages
+    run: |
+      git clone --depth 1 https://github.com/termux/termux-packages.git
 
-      - name: Configure Mesa
-        run: |
-          cd termux-packages
+  - name: Configure Mesa 24.3.4
+    run: |
+      set -e
+      cd termux-packages
 
-          MESA_VERSION="24.3.4"
-          MESA_URL="https://archive.mesa3d.org/mesa-${MESA_VERSION}.tar.xz"
+      MESA_VERSION="24.3.4"
+      MESA_URL="https://archive.mesa3d.org/mesa-${MESA_VERSION}.tar.xz"
 
-          wget -q "$MESA_URL" -O mesa.tar.xz
-          SHA256=$(sha256sum mesa.tar.xz | awk '{print $1}')
+      wget -q "$MESA_URL" -O mesa.tar.xz
+      SHA256=$(sha256sum mesa.tar.xz | awk '{print $1}')
 
-          sed -i "s|^TERMUX_PKG_VERSION=.*|TERMUX_PKG_VERSION=${MESA_VERSION}|g" packages/mesa/build.sh
-          sed -i "s|^TERMUX_PKG_SRCURL=.*|TERMUX_PKG_SRCURL=${MESA_URL}|g" packages/mesa/build.sh
-          sed -i "s|^TERMUX_PKG_SHA256=.*|TERMUX_PKG_SHA256=${SHA256}|g" packages/mesa/build.sh
+      sed -i "s|^TERMUX_PKG_VERSION=.*|TERMUX_PKG_VERSION=${MESA_VERSION}|g" packages/mesa/build.sh
+      sed -i "s|^TERMUX_PKG_SRCURL=.*|TERMUX_PKG_SRCURL=${MESA_URL}|g" packages/mesa/build.sh
+      sed -i "s|^TERMUX_PKG_SHA256=.*|TERMUX_PKG_SHA256=${SHA256}|g" packages/mesa/build.sh
 
-          # Hapus patch Adreno/Turnip
-          find packages/mesa -name "*.patch" -delete
+      # Buang patch lama
+      find packages/mesa -name "*.patch" -delete
 
-          # Opsi yang dibutuhkan XFCE4 + Termux:X11
-          sed -i '/TERMUX_PKG_SHA256=/a TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dgbm=enabled"' packages/mesa/build.sh
-          sed -i '/TERMUX_PKG_SHA256=/a TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Degl=enabled"' packages/mesa/build.sh
-          sed -i '/TERMUX_PKG_SHA256=/a TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Ddri3=enabled"' packages/mesa/build.sh
-          sed -i '/TERMUX_PKG_SHA256=/a TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dplatforms=x11"' packages/mesa/build.sh
-          sed -i '/TERMUX_PKG_SHA256=/a TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dgallium-drivers=zink,virgl,swrast"' packages/mesa/build.sh
-          sed -i '/TERMUX_PKG_SHA256=/a TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dvulkan-drivers=swrast"' packages/mesa/build.sh
+      # Konfigurasi Mesa
+      sed -i '/TERMUX_PKG_SHA256=/a TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dcpp_rtti=false"' packages/mesa/build.sh
+      sed -i '/TERMUX_PKG_SHA256=/a TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dgbm=enabled"' packages/mesa/build.sh
+      sed -i '/TERMUX_PKG_SHA256=/a TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Degl=enabled"' packages/mesa/build.sh
+      sed -i '/TERMUX_PKG_SHA256=/a TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dgles1=disabled"' packages/mesa/build.sh
+      sed -i '/TERMUX_PKG_SHA256=/a TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dgles2=enabled"' packages/mesa/build.sh
+      sed -i '/TERMUX_PKG_SHA256=/a TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Ddri3=enabled"' packages/mesa/build.sh
+      sed -i '/TERMUX_PKG_SHA256=/a TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dllvm=enabled"' packages/mesa/build.sh
+      sed -i '/TERMUX_PKG_SHA256=/a TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dshared-llvm=disabled"' packages/mesa/build.sh
+      sed -i '/TERMUX_PKG_SHA256=/a TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dglx=dri"' packages/mesa/build.sh
+      sed -i '/TERMUX_PKG_SHA256=/a TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dplatforms=x11"' packages/mesa/build.sh
+      sed -i '/TERMUX_PKG_SHA256=/a TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Ddri-drivers="' packages/mesa/build.sh
+      sed -i '/TERMUX_PKG_SHA256=/a TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dgallium-drivers=zink,virgl,swrast"' packages/mesa/build.sh
+      sed -i '/TERMUX_PKG_SHA256=/a TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dvulkan-drivers=swrast"' packages/mesa/build.sh
+      sed -i '/TERMUX_PKG_SHA256=/a TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dosmesa=true"' packages/mesa/build.sh
+      sed -i '/TERMUX_PKG_SHA256=/a TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dglvnd=true"' packages/mesa/build.sh
 
-      - name: Build Mesa
-        run: |
-          cd termux-packages
-          ./scripts/run-docker.sh ./build-package.sh -a aarch64 -f -I -C mesa
+  - name: Build Mesa
+    run: |
+      cd termux-packages
+      ./scripts/run-docker.sh ./build-package.sh -a aarch64 -f -I -C mesa
 
-      - name: Upload packages
-        uses: actions/upload-artifact@v4
-        with:
-          name: mesa-zink-24.3.4
-          path: termux-packages/output/*.deb
+  - name: Upload packages
+    uses: actions/upload-artifact@v4
+    with:
+      name: mesa-zink-24.3.4
+      path: termux-packages/output/*.deb
