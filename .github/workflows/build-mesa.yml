@@ -1,120 +1,87 @@
 name: Build Mesa-Zink 24.3.4 (Termux XFCE4)
 
 on:
-workflow_dispatch:
+  workflow_dispatch:
 
 jobs:
-build:
-runs-on: ubuntu-latest
+  build:
+    runs-on: ubuntu-latest
 
-steps:
+    steps:
+      - name: Checkout termux-packages
+        run: |
+          git clone --depth 1 https://github.com/termux/termux-packages.git
 
-  - name: Checkout termux-packages
-    run: |
-      git clone --depth 1 https://github.com/termux/termux-packages.git
+      - name: Switch Mesa Source
+        run: |
+          set -e
+          cd termux-packages
 
-  - name: Switch Mesa Source
-    run: |
-      cd termux-packages
+          MESA_VERSION="24.3.4"
+          MESA_URL="https://archive.mesa3d.org/mesa-${MESA_VERSION}.tar.xz"
 
-      MESA_VERSION="24.3.4"
-      MESA_URL="https://archive.mesa3d.org/mesa-${MESA_VERSION}.tar.xz"
+          wget -q "$MESA_URL" -O mesa.tar.xz
+          SHA256="$(sha256sum mesa.tar.xz | awk '{print $1}')"
 
-      wget -q "$MESA_URL" -O mesa.tar.xz
+          sed -i "s|^TERMUX_PKG_VERSION=.*|TERMUX_PKG_VERSION=${MESA_VERSION}|g" packages/mesa/build.sh
+          sed -i "s|^TERMUX_PKG_SRCURL=.*|TERMUX_PKG_SRCURL=${MESA_URL}|g" packages/mesa/build.sh
+          sed -i "s|^TERMUX_PKG_SHA256=.*|TERMUX_PKG_SHA256=${SHA256}|g" packages/mesa/build.sh
 
-      SHA256=$(sha256sum mesa.tar.xz | awk '{print $1}')
+      - name: Configure Mesa for Zink
+        run: |
+          set -e
+          cd termux-packages/packages/mesa
 
-      sed -i "s|^TERMUX_PKG_VERSION=.*|TERMUX_PKG_VERSION=${MESA_VERSION}|g" \
-        packages/mesa/build.sh
+          cat >> build.sh <<'EOF'
 
-      sed -i "s|^TERMUX_PKG_SRCURL=.*|TERMUX_PKG_SRCURL=${MESA_URL}|g" \
-        packages/mesa/build.sh
-
-      sed -i "s|^TERMUX_PKG_SHA256=.*|TERMUX_PKG_SHA256=${SHA256}|g" \
-        packages/mesa/build.sh
-
-  - name: Configure Mesa for Zink
-    run: |
-      cd termux-packages/packages/mesa
-
-      cat >> build.sh <<'EOF'
-
-      termux_step_pre_configure() {
-
-        TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dcpp_rtti=false"
-
-        TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dgbm=enabled"
-        TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Degl=enabled"
-
-        TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dgles1=disabled"
-        TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dgles2=enabled"
-
-        TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Ddri3=enabled"
-
-        TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dllvm=enabled"
-        TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dshared-llvm=disabled"
-
-        TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dglx=dri"
-        TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dplatforms=x11"
-
-        TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Ddri-drivers="
-
-        TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dgallium-drivers=zink,virgl,swrast"
-
-        TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dvulkan-drivers=swrast"
-
-        TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dosmesa=true"
-        TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dglvnd=true"
-
-        TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dlibarchive:programs=false"
-        TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dlibarchive:install_static=false"
-      }
-
-      termux_step_post_get_source() {
-
-        echo "Applying Termux fixes..."
-
-        if [ -f "src/util/anon_file.c" ]; then
-          sed -i \
-            's|"/tmp/xdg-runtime-mesa-%ld"|"$PREFIX/tmp/xdg-runtime-mesa-%ld"|g' \
-            src/util/anon_file.c
-        fi
-
-        if [ -f "src/util/os_file.c" ]; then
-          grep -q "sys/epoll.h" src/util/os_file.c || \
-          sed -i '1i #include <sys/epoll.h>' src/util/os_file.c
-        fi
-
-        if [ -f "src/gallium/auxiliary/gallivm/lp_bld_misc.cpp" ]; then
-
-          grep -q "HAVE_SYS_AUXV" \
-            src/gallium/auxiliary/gallivm/lp_bld_misc.cpp || \
-
-          sed -i '/#include "lp_bld_debug.h"/a \
-
-#if __has_include(<sys/auxv.h>)
-#include <sys/auxv.h>
-#define HAVE_SYS_AUXV 1
-#endif' 
-src/gallium/auxiliary/gallivm/lp_bld_misc.cpp
-fi
+termux_step_pre_configure() {
+  TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dcpp_rtti=false"
+  TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dgbm=enabled"
+  TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Degl=enabled"
+  TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dgles1=disabled"
+  TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dgles2=enabled"
+  TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Ddri3=enabled"
+  TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dllvm=enabled"
+  TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dshared-llvm=disabled"
+  TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dglx=dri"
+  TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dplatforms=x11"
+  TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Ddri-drivers="
+  TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dgallium-drivers=zink,virgl,swrast"
+  TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dvulkan-drivers=swrast"
+  TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dosmesa=true"
+  TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dglvnd=true"
+  TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dlibarchive:programs=false"
+  TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dlibarchive:install_static=false"
 }
 
-      EOF
+termux_step_post_get_source() {
+  echo "Applying Termux fixes..."
 
-  - name: Build Mesa package
-    run: |
-      cd termux-packages
+  if [ -f "src/util/anon_file.c" ]; then
+    sed -i 's|"/tmp/xdg-runtime-mesa-%ld"|"$PREFIX/tmp/xdg-runtime-mesa-%ld"|g' src/util/anon_file.c
+  fi
 
-      ./scripts/run-docker.sh \
-      ./build-package.sh \
-      -a aarch64 \
-      -I \
-      -f \
-      -C mesa
+  if [ -f "src/util/os_file.c" ] && ! grep -q "sys/epoll.h" src/util/os_file.c; then
+    sed -i '1i #include <sys/epoll.h>' src/util/os_file.c
+  fi
 
-  - name: Upload packages
-    uses: actions/upload-artifact@v4
-    with:
-      name: mesa-zink-24.3.4
-      path: termux-packages/output/*.deb
+  if [ -f "src/gallium/auxiliary/gallivm/lp_bld_misc.cpp" ] && ! grep -q "HAVE_SYS_AUXV" src/gallium/auxiliary/gallivm/lp_bld_misc.cpp; then
+    sed -i '/#include "lp_bld_debug.h"/a \
+#if __has_include(<sys/auxv.h>)\
+#include <sys/auxv.h>\
+#define HAVE_SYS_AUXV 1\
+#endif' src/gallium/auxiliary/gallivm/lp_bld_misc.cpp
+  fi
+}
+EOF
+
+      - name: Build Mesa package
+        run: |
+          cd termux-packages
+          ./scripts/run-docker.sh ./build-package.sh -a aarch64 -f -I -C mesa
+
+      - name: Upload DEB packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: mesa-zink-24.3.4
+          path: termux-packages/output/*.deb
