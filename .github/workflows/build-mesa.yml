@@ -1,260 +1,83 @@
 name: Build Termux Mesa Zink Universal (swrast+zink+virgl)
 
-# ─────────────────────────────────────────────────────────────
-#  Mirip mesa-zink di TUR (termux-user-repository):
-#  -Dgallium-drivers=swrast,zink,virgl
-#  -Dvulkan-drivers=swrast,freedreno
-#  Jalan di SEMUA device (Mali, Exynos, Tensor, dll)
-#  Tidak butuh hardware Adreno / Panfrost
-# ─────────────────────────────────────────────────────────────
-
 on:
   workflow_dispatch:
     inputs:
       mesa_version:
-        description: 'Mesa version (upstream tag, e.g. 24.3.4)'
+        description: 'Mesa version (e.g. 24.3.4)'
         required: true
         default: '24.3.4'
-      arch:
-        description: 'Target architecture'
-        required: true
-        default: 'aarch64'
-        type: choice
-        options:
-          - aarch64
-          - arm
-          - x86_64
-          - i686
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    env:
-      MESA_VERSION: ${{ github.event.inputs.mesa_version }}
-      TARGET_ARCH:  ${{ github.event.inputs.arch }}
-
     steps:
 
-      # ── 1. Checkout termux-packages ──────────────────────────
       - name: Checkout termux-packages
-        run: |
-          git clone --depth 1 https://github.com/termux/termux-packages.git
-          echo "termux-packages cloned."
+        run: git clone --depth 1 https://github.com/termux/termux-packages.git
 
-      # ── 2. Download Mesa source & hitung SHA256 ──────────────
-      - name: Download Mesa ${{ env.MESA_VERSION }} source
-        id: src
+      - name: Setup Mesa Zink Universal source
         run: |
-          VERSION="${MESA_VERSION}"
-          # Mesa upstream resmi (freedesktop)
+          cd termux-packages
+
+          echo "Removing Adreno/Turnip-only patches..."
+          rm -f packages/mesa/0016-unofficial_support_adreno_710_720_722.patch
+          rm -f packages/mesa/0021-unofficial-support-adreno-810-825-829.patch
+          rm -f packages/mesa/0020-unofficial-support-adreno-830.patch
+          rm -f packages/mesa/0019-UBWC_5-and-UBWC_6-support.patch
+          rm -f packages/mesa/0017-preserve-egl-support-in-zink.patch
+          rm -f packages/mesa/0018-disable-general-layout-in-zink-for-turnip.patch
+
+          VERSION="${{ github.event.inputs.mesa_version }}"
           TAR_URL="https://mesa.freedesktop.org/archive/mesa-${VERSION}.tar.xz"
           FOLDER_NAME="mesa-${VERSION}"
 
-          echo "Downloading: $TAR_URL"
-          wget -q --show-progress "$TAR_URL" -O mesa_source.tar.xz
+          echo "Downloading source to calculate SHA256..."
+          wget -q "$TAR_URL" -O mesa.tar.gz
+          SHA256=$(sha256sum mesa.tar.gz | awk '{print $1}')
 
-          SHA256=$(sha256sum mesa_source.tar.xz | awk '{print $1}')
-          echo "SHA256: $SHA256"
-          echo "Folder: $FOLDER_NAME"
+          echo "Patching build.sh..."
+          sed -i "s|^TERMUX_PKG_VERSION=.*|TERMUX_PKG_VERSION=${VERSION}|g" packages/mesa/build.sh
+          sed -i "s|^TERMUX_PKG_SRCURL=.*|TERMUX_PKG_SRCURL=${TAR_URL}|g" packages/mesa/build.sh
+          sed -i "s|^TERMUX_PKG_SHA256=.*|TERMUX_PKG_SHA256=${SHA256}|g" packages/mesa/build.sh
+          sed -i "/^TERMUX_PKG_SHA256=/a TERMUX_PKG_FOLDERNAME=${FOLDER_NAME}" packages/mesa/build.sh
+          sed -i '/^TERMUX_PKG_EXTRA_CONFIGURE_ARGS/d' packages/mesa/build.sh
+          sed -i "/^TERMUX_PKG_FOLDERNAME=/a TERMUX_PKG_EXTRA_CONFIGURE_ARGS=\"-Dgallium-drivers=swrast,zink,virgl -Dvulkan-drivers=swrast,freedreno -Dfreedreno-kgsl=true -Dosmesa=true -Dglvnd=true -Dopengl=true -Dgles1=enabled -Dgles2=enabled -Degl=enabled -Dglx=disabled -Dplatforms=android -Dllvm=disabled -Dzlib=enabled -Dshared-glapi=enabled -Dshader-cache=enabled -Dbuildtype=release -Db_ndebug=true -Dlibarchive=disabled\"" packages/mesa/build.sh
 
-          echo "tar_url=$TAR_URL"         >> $GITHUB_OUTPUT
-          echo "sha256=$SHA256"           >> $GITHUB_OUTPUT
-          echo "folder_name=$FOLDER_NAME" >> $GITHUB_OUTPUT
-
-      # ── 3. Hapus patch Adreno/Turnip yang tidak dipakai ──────
-      - name: Remove Adreno/Turnip-specific patches
+      - name: Inject compatibility fixes
         run: |
           cd termux-packages/packages/mesa
-          echo "==> Removing Adreno/Turnip patches (tidak relevan untuk universal build)..."
-          for patch in \
-            0016-unofficial_support_adreno_710_720_722.patch \
-            0021-unofficial-support-adreno-810-825-829.patch \
-            0020-unofficial-support-adreno-830.patch \
-            0017-preserve-egl-support-in-zink.patch \
-            0018-disable-general-layout-in-zink-for-turnip.patch \
-            0019-UBWC_5-and-UBWC_6-support.patch; do
-            if [ -f "$patch" ]; then
-              rm -f "$patch"
-              echo "  Removed: $patch"
-            fi
-          done
+          cat >> build.sh <<'HOOKEOF'
+          termux_step_pre_configure() {
+          CPPFLAGS+=" -D__USE_GNU"
+          LDFLAGS+=" -landroid-shmem -ltinfo"
+          LDFLAGS+=" -Wl,--undefined-version"
+          }
+          termux_step_post_get_source() {
+          echo "Applying Termux compatibility fixes..."
+          if [ -f "src/util/anon_file.c" ]; then
+          echo "Fixing anon_file.c..."
+          sed -i 's|"/tmp/xdg-runtime-mesa-%ld"|"$PREFIX/tmp/xdg-runtime-mesa-%ld"|g' src/util/anon_file.c
+          fi
+          if [ -f "src/util/os_file.c" ]; then
+          echo "Fix epoll os_file.c..."
+          sed -i '1i #include <sys/epoll.h>' src/util/os_file.c
+          fi
+          if [ -f "src/gallium/drivers/virgl/virgl_vtest_socket.c" ]; then
+          echo "Fixing virgl socket path..."
+          sed -i 's|/tmp/virgl.sock|$PREFIX/tmp/virgl.sock|g' src/gallium/drivers/virgl/virgl_vtest_socket.c
+          fi
+          }
+          HOOKEOF
 
-          # Patch ini TETAP dipakai karena universal build butuh mereka:
-          # 0003-fix-for-anon-file.patch       → redirect /tmp ke $PREFIX/tmp
-          # 0007-use-mtx_t-operations.patch     → mutex fix untuk semua driver
-          # 0005-virgl-socket-path.patch         → virgl socket path fix
-          # 0013-detect-sve-sve2-support.patch   → ARM SVE detection
-          echo "==> Retained patches: 0003, 0005, 0007, 0013 (semua masih relevan)"
-
-      # ── 4. Patch build.sh: source URL + Meson args universal ──
-      - name: Patch build.sh for Universal Zink
-        run: |
-          cd termux-packages/packages/mesa
-
-          VERSION="${MESA_VERSION}"
-          TAR_URL="${{ steps.src.outputs.tar_url }}"
-          SHA256="${{ steps.src.outputs.sha256 }}"
-          FOLDER="${{ steps.src.outputs.folder_name }}"
-
-          echo "==> Patching metadata..."
-          sed -i "s|^TERMUX_PKG_VERSION=.*|TERMUX_PKG_VERSION=${VERSION}|"   build.sh
-          sed -i "s|^TERMUX_PKG_SRCURL=.*|TERMUX_PKG_SRCURL=${TAR_URL}|"    build.sh
-          sed -i "s|^TERMUX_PKG_SHA256=.*|TERMUX_PKG_SHA256=${SHA256}|"     build.sh
-          sed -i "/^TERMUX_PKG_SHA256=/a TERMUX_PKG_FOLDERNAME=${FOLDER}"   build.sh
-
-          echo "==> Replacing TERMUX_PKG_EXTRA_CONFIGURE_ARGS..."
-          # Hapus semua baris EXTRA_CONFIGURE_ARGS yang sudah ada
-          sed -i '/^TERMUX_PKG_EXTRA_CONFIGURE_ARGS/d' build.sh
-
-          # Tambah configure args universal (mirip TUR mesa-zink)
-          # setelah baris FOLDERNAME
-          sed -i "/^TERMUX_PKG_FOLDERNAME=/a \\
-TERMUX_PKG_EXTRA_CONFIGURE_ARGS=\"\\
-  -Dgallium-drivers=swrast,zink,virgl\\
-  -Dvulkan-drivers=swrast,freedreno\\
-  -Dfreedreno-kgsl=true\\
-  -Dosmesa=true\\
-  -Dglvnd=true\\
-  -Dopengl=true\\
-  -Dgles1=enabled\\
-  -Dgles2=enabled\\
-  -Degl=enabled\\
-  -Dglx=disabled\\
-  -Dplatforms=android\\
-  -Dllvm=disabled\\
-  -Dzlib=enabled\\
-  -Dshared-glapi=enabled\\
-  -Dshader-cache=enabled\\
-  -Dbuildtype=release\\
-  -Db_ndebug=true\\
-  -Dlibarchive=disabled\\
-\"" build.sh
-
-          echo "==> Injecting required LDFLAGS & CPPFLAGS (seperti TUR)..."
-          # Tambah fungsi pre-configure untuk set flags
-          cat >> build.sh <<'PRECONF'
-
-termux_step_pre_configure() {
-  # Flags wajib untuk build Mesa di Android/Termux
-  CPPFLAGS+=" -D__USE_GNU"
-  LDFLAGS+=" -landroid-shmem -ltinfo"
-  LDFLAGS+=" -Wl,--undefined-version"
-}
-PRECONF
-
-          echo "==> Preview build.sh (50 baris pertama):"
-          head -50 build.sh
-
-      # ── 5. Inject post-source hook: Termux compatibility fixes ─
-      - name: Inject post-source fixes
-        run: |
-          cat >> termux-packages/packages/mesa/build.sh <<'POSTSOURCE'
-
-termux_step_post_get_source() {
-  echo ">>> [Mesa Zink Universal] Applying Termux compatibility fixes..."
-
-  # Fix 1: /tmp → $PREFIX/tmp (Termux tidak punya /tmp standar Android)
-  if [ -f "src/util/anon_file.c" ]; then
-    echo "  Fixing anon_file.c paths..."
-    sed -i 's|"/tmp/xdg-runtime-mesa-%ld"|"$PREFIX/tmp/xdg-runtime-mesa-%ld"|g' \
-      src/util/anon_file.c
-  fi
-
-  # Fix 2: epoll header — sering hilang saat cross-compile
-  if [ -f "src/util/os_file.c" ]; then
-    echo "  Injecting epoll header in os_file.c..."
-    grep -q "sys/epoll.h" src/util/os_file.c || \
-      sed -i '1i #include <sys/epoll.h>' src/util/os_file.c
-  fi
-
-  # Fix 3: virgl socket path → $PREFIX/tmp
-  if [ -f "src/gallium/drivers/virgl/virgl_vtest_socket.c" ]; then
-    echo "  Fixing virgl socket path..."
-    sed -i "s|/tmp/virgl.sock|\$TERMUX_PREFIX/tmp/virgl.sock|g" \
-      src/gallium/drivers/virgl/virgl_vtest_socket.c 2>/dev/null || true
-  fi
-
-  # Fix 4: Android Bionic tidak punya getprogname() — fallback ke argv[0]
-  # (biasanya sudah di-patch oleh termux-packages, cek saja)
-  if grep -r "getprogname" src/util/ 2>/dev/null | grep -v ".patch" | grep -q "getprogname"; then
-    echo "  Note: getprogname() ditemukan, Termux patch 0008 harus aktif"
-  fi
-
-  echo ">>> [Mesa Zink Universal] Done."
-}
-POSTSOURCE
-
-      # ── 6. Build via Termux Docker ───────────────────────────
-      - name: Build Mesa Zink (${{ env.TARGET_ARCH }})
+      - name: Build Mesa package
         run: |
           cd termux-packages
-          echo "==> Starting Docker build: mesa untuk $TARGET_ARCH"
-          ./scripts/run-docker.sh ./build-package.sh -a "$TARGET_ARCH" -f -I -C mesa
+          ./scripts/run-docker.sh ./build-package.sh -a aarch64 -f -I -C mesa
 
-      # ── 7. Upload .deb artifacts ─────────────────────────────
-      - name: Upload DEB artifacts
+      - name: Upload DEB packages
         uses: actions/upload-artifact@v4
         with:
-          name: mesa-zink-universal-${{ env.MESA_VERSION }}-${{ env.TARGET_ARCH }}
+          name: termux-mesa-zink-universal-${{ github.event.inputs.mesa_version }}
           path: termux-packages/output/*.deb
-          if-no-files-found: error
-          retention-days: 30
-
-      # ── 8. Print panduan instalasi ───────────────────────────
-      - name: Print install & usage guide
-        if: success()
-        run: |
-          cat <<'EOF'
-          ╔══════════════════════════════════════════════════════╗
-           Mesa Zink Universal ${{ env.MESA_VERSION }} - BUILD SUKSES
-           Target: ${{ env.TARGET_ARCH }}
-           Drivers: swrast + zink + virgl
-          ╚══════════════════════════════════════════════════════╝
-
-          ── INSTALL di Termux ──────────────────────────────────
-          Download artifact dari tab Actions, lalu:
-
-            dpkg -i mesa_*.deb
-            dpkg -i mesa-dev_*.deb  # opsional, kalau butuh headers
-
-          ── SETUP virgl_test_server (untuk virpipe/GLES) ───────
-          Install virglrenderer dulu:
-            pkg install virglrenderer-android
-
-          Jalankan server (di sesi Termux terpisah):
-            MESA_NO_ERROR=1 \
-            virgl_test_server --use-egl-surfaceless --use-gles &
-
-          ── ENV VARIABLES ──────────────────────────────────────
-
-          [A] Mode ZINK (OpenGL via Vulkan — butuh Vulkan support):
-            export MESA_LOADER_DRIVER_OVERRIDE=zink
-            export GALLIUM_DRIVER=zink
-            export ZINK_DESCRIPTORS=lazy
-            export MESA_GL_VERSION_OVERRIDE=4.6
-            export MESA_GLSL_VERSION_OVERRIDE=460
-            export TU_DEBUG=noconform
-
-          [B] Mode VIRPIPE (OpenGL via virglrenderer — universal, termasuk Mali):
-            export MESA_LOADER_DRIVER_OVERRIDE=zink
-            export GALLIUM_DRIVER=virpipe
-            export MESA_GL_VERSION_OVERRIDE=4.3COMPAT
-            export MESA_GLES_VERSION_OVERRIDE=3.2
-            export MESA_NO_ERROR=1
-
-          [C] Mode SWRAST (software fallback — paling compat, paling lambat):
-            export LIBGL_ALWAYS_SOFTWARE=1
-            export GALLIUM_DRIVER=llvmpipe
-            export MESA_GL_VERSION_OVERRIDE=4.5
-
-          ── NOTES ──────────────────────────────────────────────
-          Mali G85/G52 di Samsung A05 (tanpa Vulkan native):
-            → Pakai mode VIRPIPE [B] — paling stabil
-            → virgl_test_server menjembatani OpenGL ke Android GLES
-
-          Untuk app Termux-X11 + Box64 + Wine:
-            export DISPLAY=:0
-            export MESA_VK_WSI_PRESENT_MODE=immediate
-
-          EOF
           
