@@ -1,0 +1,124 @@
+name: Build Termux Mesa Zink Universal (swrast+zink+virgl)
+
+on:
+  workflow_dispatch:
+    inputs:
+      mesa_version:
+        description: 'Mesa version (e.g. 24.3.4)'
+        required: true
+        default: '24.3.4'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: Checkout termux-packages
+        run: git clone --depth 1 https://github.com/termux/termux-packages.git
+
+      - name: Remove all incompatible patches
+        run: |
+          cd termux-packages/packages/mesa
+          echo "Removing patches that fail on Mesa 24.3.4..."
+
+          # Patch ini conflict/fail di 24.3.4 - repair manual di post_get_source
+          rm -f 0003-fix-for-anon-file.patch
+          rm -f 0004-do-not-check-xlocale.patch
+          rm -f 0005-virgl-socket-path.patch
+
+          # Patch Adreno/Turnip - tidak relevan untuk universal build
+          rm -f 0016-unofficial_support_adreno_710_720_722.patch
+          rm -f 0021-unofficial-support-adreno-810-825-829.patch
+          rm -f 0020-unofficial-support-adreno-830.patch
+          rm -f 0019-UBWC_5-and-UBWC_6-support.patch
+          rm -f 0017-preserve-egl-support-in-zink.patch
+          rm -f 0018-disable-general-layout-in-zink-for-turnip.patch
+
+          echo "Remaining patches:"
+          ls *.patch 2>/dev/null || echo "(none)"
+
+      - name: Patch build.sh version and SHA256
+        run: |
+          cd termux-packages
+
+          VERSION="${{ github.event.inputs.mesa_version }}"
+          TAR_URL="https://archive.mesa3d.org/mesa-${VERSION}.tar.xz"
+
+          echo "Downloading source to calculate SHA256..."
+          wget -q "$TAR_URL" -O mesa.tar.gz
+          SHA256=$(sha256sum mesa.tar.gz | awk '{print $1}')
+          echo "SHA256: $SHA256"
+
+          sed -i "s|^TERMUX_PKG_VERSION=.*|TERMUX_PKG_VERSION=${VERSION}|g" packages/mesa/build.sh
+          sed -i "s|^TERMUX_PKG_SHA256=.*|TERMUX_PKG_SHA256=${SHA256}|g" packages/mesa/build.sh
+
+          echo "Done patching build.sh"
+
+      - name: Inject Zink configure args and manual repairs
+        run: |
+          cd termux-packages/packages/mesa
+          cat >> build.sh <<'EOF'
+          termux_step_pre_configure() {
+          CPPFLAGS+=" -D__USE_GNU"
+          LDFLAGS+=" -landroid-shmem -ltinfo"
+          LDFLAGS+=" -Wl,--undefined-version"
+          TERMUX_PKG_EXTRA_CONFIGURE_ARGS="
+          -Dgallium-drivers=swrast,zink,virgl
+          -Dvulkan-drivers=swrast,freedreno
+          -Dfreedreno-kgsl=true
+          -Dosmesa=true
+          -Dglvnd=true
+          -Dopengl=true
+          -Dgles1=enabled
+          -Dgles2=enabled
+          -Degl=enabled
+          -Dglx=disabled
+          -Dplatforms=android
+          -Dllvm=disabled
+          -Dzlib=enabled
+          -Dshared-glapi=enabled
+          -Dshader-cache=enabled
+          -Dbuildtype=release
+          -Db_ndebug=true
+          -Dlibarchive=disabled
+          "
+          }
+          termux_step_post_get_source() {
+          echo "=== Manual repairs for deleted patches ==="
+
+          echo "Repair 0003: anon_file.c path fix..."
+          if [ -f "src/util/anon_file.c" ]; then
+          sed -i 's|"/tmp/xdg-runtime-mesa-%ld"|"$PREFIX/tmp/xdg-runtime-mesa-%ld"|g' src/util/anon_file.c
+          fi
+
+          echo "Repair 0004: remove xlocale check from meson.build..."
+          if [ -f "meson.build" ]; then
+          sed -i '/xlocale\.h/d' meson.build
+          sed -i '/have_xlocale/d' meson.build
+          fi
+
+          echo "Repair 0005: virgl socket path fix..."
+          if [ -f "src/gallium/drivers/virgl/virgl_vtest_socket.c" ]; then
+          sed -i 's|/tmp/virgl.sock|$PREFIX/tmp/virgl.sock|g' src/gallium/drivers/virgl/virgl_vtest_socket.c
+          fi
+
+          echo "Fix: epoll header in os_file.c..."
+          if [ -f "src/util/os_file.c" ]; then
+          grep -q "sys/epoll.h" src/util/os_file.c || sed -i '1i #include <sys/epoll.h>' src/util/os_file.c
+          fi
+
+          echo "=== Manual repairs done ==="
+          }
+          EOF
+
+      - name: Build Mesa package
+        run: |
+          cd termux-packages
+          ./scripts/run-docker.sh ./build-package.sh -a aarch64 -f -I -C mesa
+
+      - name: Upload DEB packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: termux-mesa-zink-universal-${{ github.event.inputs.mesa_version }}
+          path: termux-packages/output/*.deb
+          
