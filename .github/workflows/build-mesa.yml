@@ -20,7 +20,8 @@ jobs:
         run: |
           cd termux-packages
 
-          echo "Removing Adreno/Turnip-only patches..."
+          echo "Removing incompatible patches..."
+          rm -f packages/mesa/0003-fix-for-anon-file.patch
           rm -f packages/mesa/0016-unofficial_support_adreno_710_720_722.patch
           rm -f packages/mesa/0021-unofficial-support-adreno-810-825-829.patch
           rm -f packages/mesa/0020-unofficial-support-adreno-830.patch
@@ -30,7 +31,6 @@ jobs:
 
           VERSION="${{ github.event.inputs.mesa_version }}"
           TAR_URL="https://archive.mesa3d.org/mesa-${VERSION}.tar.xz"
-          FOLDER_NAME="mesa-${VERSION}"
 
           echo "Downloading source to calculate SHA256..."
           wget -q "$TAR_URL" -O mesa.tar.gz
@@ -70,17 +70,16 @@ jobs:
           "
           }
           termux_step_post_get_source() {
-          echo "Applying Termux compatibility fixes..."
+          echo "Manual repair: anon_file.c path fix (replaces deleted patch 0003)..."
           if [ -f "src/util/anon_file.c" ]; then
-          echo "Fixing anon_file.c paths..."
           sed -i 's|"/tmp/xdg-runtime-mesa-%ld"|"$PREFIX/tmp/xdg-runtime-mesa-%ld"|g' src/util/anon_file.c
           fi
+          echo "Fix epoll header in os_file.c..."
           if [ -f "src/util/os_file.c" ]; then
-          echo "Fix epoll os_file.c..."
           grep -q "sys/epoll.h" src/util/os_file.c || sed -i '1i #include <sys/epoll.h>' src/util/os_file.c
           fi
+          echo "Fix virgl socket path..."
           if [ -f "src/gallium/drivers/virgl/virgl_vtest_socket.c" ]; then
-          echo "Fixing virgl socket path..."
           sed -i 's|/tmp/virgl.sock|$PREFIX/tmp/virgl.sock|g' src/gallium/drivers/virgl/virgl_vtest_socket.c
           fi
           }
