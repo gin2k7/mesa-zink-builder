@@ -12,7 +12,7 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/termux/termux-packages.git
 
-      - name: Switch Mesa Source
+      - name: Setup Mesa 24.3.4 source
         run: |
           set -e
           cd termux-packages
@@ -20,14 +20,27 @@ jobs:
           MESA_VERSION="24.3.4"
           MESA_URL="https://archive.mesa3d.org/mesa-${MESA_VERSION}.tar.xz"
 
+          echo "Downloading Mesa source..."
           wget -q "$MESA_URL" -O mesa.tar.xz
           SHA256="$(sha256sum mesa.tar.xz | awk '{print $1}')"
 
+          echo "Patching Termux mesa build..."
           sed -i "s|^TERMUX_PKG_VERSION=.*|TERMUX_PKG_VERSION=${MESA_VERSION}|g" packages/mesa/build.sh
           sed -i "s|^TERMUX_PKG_SRCURL=.*|TERMUX_PKG_SRCURL=${MESA_URL}|g" packages/mesa/build.sh
           sed -i "s|^TERMUX_PKG_SHA256=.*|TERMUX_PKG_SHA256=${SHA256}|g" packages/mesa/build.sh
 
-      - name: Configure Mesa for Zink
+          echo "Removing Adreno/Turnip-specific patches..."
+          rm -f packages/mesa/0016-unofficial_support_adreno_710_720_722.patch
+          rm -f packages/mesa/0021-unofficial-support-adreno-810-825-829.patch
+          rm -f packages/mesa/0020-unofficial-support-adreno-830.patch
+          rm -f packages/mesa/0003-fix-for-anon-file.patch
+          rm -f packages/mesa/0007-use-mtx_t-operations-in-turnip.patch
+          rm -f packages/mesa/0019-UBWC_5-and-UBWC_6-support.patch
+          rm -f packages/mesa/0013-detect-sve-sve2-support.patch
+          rm -f packages/mesa/0017-preserve-egl-support-in-zink.patch
+          rm -f packages/mesa/0018-disable-general-layout-in-zink-for-turnip.patch
+
+      - name: Inject Mesa Zink build options
         run: |
           set -e
           cd termux-packages/packages/mesa
@@ -63,14 +76,6 @@ termux_step_post_get_source() {
 
   if [ -f "src/util/os_file.c" ] && ! grep -q "sys/epoll.h" src/util/os_file.c; then
     sed -i '1i #include <sys/epoll.h>' src/util/os_file.c
-  fi
-
-  if [ -f "src/gallium/auxiliary/gallivm/lp_bld_misc.cpp" ] && ! grep -q "HAVE_SYS_AUXV" src/gallium/auxiliary/gallivm/lp_bld_misc.cpp; then
-    sed -i '/#include "lp_bld_debug.h"/a \
-#if __has_include(<sys/auxv.h>)\
-#include <sys/auxv.h>\
-#define HAVE_SYS_AUXV 1\
-#endif' src/gallium/auxiliary/gallivm/lp_bld_misc.cpp
   fi
 }
 EOF
