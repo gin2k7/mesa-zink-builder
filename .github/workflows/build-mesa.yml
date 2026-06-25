@@ -1,4 +1,4 @@
-name: Build Mesa-Zink 24.3.4 (Termux XFCE4)
+name: Build Mesa-Zink XFCE4
 
 on:
   workflow_dispatch:
@@ -9,83 +9,39 @@ jobs:
 
     steps:
       - name: Checkout termux-packages
-        run: |
-          git clone --depth 1 https://github.com/termux/termux-packages.git
+        run: git clone --depth 1 https://github.com/termux/termux-packages.git
 
-      - name: Setup Mesa 24.3.4 source
+      - name: Configure Mesa
         run: |
-          set -e
           cd termux-packages
 
           MESA_VERSION="24.3.4"
           MESA_URL="https://archive.mesa3d.org/mesa-${MESA_VERSION}.tar.xz"
 
-          echo "Downloading Mesa source..."
           wget -q "$MESA_URL" -O mesa.tar.xz
-          SHA256="$(sha256sum mesa.tar.xz | awk '{print $1}')"
+          SHA256=$(sha256sum mesa.tar.xz | awk '{print $1}')
 
-          echo "Patching Termux mesa build..."
           sed -i "s|^TERMUX_PKG_VERSION=.*|TERMUX_PKG_VERSION=${MESA_VERSION}|g" packages/mesa/build.sh
           sed -i "s|^TERMUX_PKG_SRCURL=.*|TERMUX_PKG_SRCURL=${MESA_URL}|g" packages/mesa/build.sh
           sed -i "s|^TERMUX_PKG_SHA256=.*|TERMUX_PKG_SHA256=${SHA256}|g" packages/mesa/build.sh
 
-          echo "Removing Adreno/Turnip-specific patches..."
-          rm -f packages/mesa/0016-unofficial_support_adreno_710_720_722.patch
-          rm -f packages/mesa/0021-unofficial-support-adreno-810-825-829.patch
-          rm -f packages/mesa/0020-unofficial-support-adreno-830.patch
-          rm -f packages/mesa/0003-fix-for-anon-file.patch
-          rm -f packages/mesa/0007-use-mtx_t-operations-in-turnip.patch
-          rm -f packages/mesa/0019-UBWC_5-and-UBWC_6-support.patch
-          rm -f packages/mesa/0013-detect-sve-sve2-support.patch
-          rm -f packages/mesa/0017-preserve-egl-support-in-zink.patch
-          rm -f packages/mesa/0018-disable-general-layout-in-zink-for-turnip.patch
+          # Hapus patch Adreno/Turnip
+          find packages/mesa -name "*.patch" -delete
 
-      - name: Inject Mesa Zink build options
-        run: |
-          set -e
-          cd termux-packages/packages/mesa
+          # Opsi yang dibutuhkan XFCE4 + Termux:X11
+          sed -i '/TERMUX_PKG_SHA256=/a TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dgbm=enabled"' packages/mesa/build.sh
+          sed -i '/TERMUX_PKG_SHA256=/a TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Degl=enabled"' packages/mesa/build.sh
+          sed -i '/TERMUX_PKG_SHA256=/a TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Ddri3=enabled"' packages/mesa/build.sh
+          sed -i '/TERMUX_PKG_SHA256=/a TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dplatforms=x11"' packages/mesa/build.sh
+          sed -i '/TERMUX_PKG_SHA256=/a TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dgallium-drivers=zink,virgl,swrast"' packages/mesa/build.sh
+          sed -i '/TERMUX_PKG_SHA256=/a TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dvulkan-drivers=swrast"' packages/mesa/build.sh
 
-          cat >> build.sh <<'EOF'
-
-termux_step_pre_configure() {
-  TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dcpp_rtti=false"
-  TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dgbm=enabled"
-  TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Degl=enabled"
-  TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dgles1=disabled"
-  TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dgles2=enabled"
-  TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Ddri3=enabled"
-  TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dllvm=enabled"
-  TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dshared-llvm=disabled"
-  TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dglx=dri"
-  TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dplatforms=x11"
-  TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Ddri-drivers="
-  TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dgallium-drivers=zink,virgl,swrast"
-  TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dvulkan-drivers=swrast"
-  TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dosmesa=true"
-  TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dglvnd=true"
-  TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dlibarchive:programs=false"
-  TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -Dlibarchive:install_static=false"
-}
-
-termux_step_post_get_source() {
-  echo "Applying Termux fixes..."
-
-  if [ -f "src/util/anon_file.c" ]; then
-    sed -i 's|"/tmp/xdg-runtime-mesa-%ld"|"$PREFIX/tmp/xdg-runtime-mesa-%ld"|g' src/util/anon_file.c
-  fi
-
-  if [ -f "src/util/os_file.c" ] && ! grep -q "sys/epoll.h" src/util/os_file.c; then
-    sed -i '1i #include <sys/epoll.h>' src/util/os_file.c
-  fi
-}
-EOF
-
-      - name: Build Mesa package
+      - name: Build Mesa
         run: |
           cd termux-packages
           ./scripts/run-docker.sh ./build-package.sh -a aarch64 -f -I -C mesa
 
-      - name: Upload DEB packages
+      - name: Upload packages
         uses: actions/upload-artifact@v4
         with:
           name: mesa-zink-24.3.4
