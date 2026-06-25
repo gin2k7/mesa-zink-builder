@@ -29,46 +29,62 @@ jobs:
           rm -f packages/mesa/0018-disable-general-layout-in-zink-for-turnip.patch
 
           VERSION="${{ github.event.inputs.mesa_version }}"
-          TAR_URL="https://mesa.freedesktop.org/archive/mesa-${VERSION}.tar.xz"
+          TAR_URL="https://archive.mesa3d.org/mesa-${VERSION}.tar.xz"
           FOLDER_NAME="mesa-${VERSION}"
 
           echo "Downloading source to calculate SHA256..."
           wget -q "$TAR_URL" -O mesa.tar.gz
           SHA256=$(sha256sum mesa.tar.gz | awk '{print $1}')
 
-          echo "Patching build.sh..."
+          echo "Patching build.sh version and SHA256 only..."
           sed -i "s|^TERMUX_PKG_VERSION=.*|TERMUX_PKG_VERSION=${VERSION}|g" packages/mesa/build.sh
-          sed -i "s|^TERMUX_PKG_SRCURL=.*|TERMUX_PKG_SRCURL=${TAR_URL}|g" packages/mesa/build.sh
           sed -i "s|^TERMUX_PKG_SHA256=.*|TERMUX_PKG_SHA256=${SHA256}|g" packages/mesa/build.sh
-          sed -i "/^TERMUX_PKG_SHA256=/a TERMUX_PKG_FOLDERNAME=${FOLDER_NAME}" packages/mesa/build.sh
-          sed -i '/^TERMUX_PKG_EXTRA_CONFIGURE_ARGS/d' packages/mesa/build.sh
-          sed -i "/^TERMUX_PKG_FOLDERNAME=/a TERMUX_PKG_EXTRA_CONFIGURE_ARGS=\"-Dgallium-drivers=swrast,zink,virgl -Dvulkan-drivers=swrast,freedreno -Dfreedreno-kgsl=true -Dosmesa=true -Dglvnd=true -Dopengl=true -Dgles1=enabled -Dgles2=enabled -Degl=enabled -Dglx=disabled -Dplatforms=android -Dllvm=disabled -Dzlib=enabled -Dshared-glapi=enabled -Dshader-cache=enabled -Dbuildtype=release -Db_ndebug=true -Dlibarchive=disabled\"" packages/mesa/build.sh
 
-      - name: Inject compatibility fixes
+      - name: Inject Zink configure args and compatibility fixes
         run: |
           cd termux-packages/packages/mesa
-          cat >> build.sh <<'HOOKEOF'
+          cat >> build.sh <<'EOF'
           termux_step_pre_configure() {
           CPPFLAGS+=" -D__USE_GNU"
           LDFLAGS+=" -landroid-shmem -ltinfo"
           LDFLAGS+=" -Wl,--undefined-version"
+          TERMUX_PKG_EXTRA_CONFIGURE_ARGS="
+          -Dgallium-drivers=swrast,zink,virgl
+          -Dvulkan-drivers=swrast,freedreno
+          -Dfreedreno-kgsl=true
+          -Dosmesa=true
+          -Dglvnd=true
+          -Dopengl=true
+          -Dgles1=enabled
+          -Dgles2=enabled
+          -Degl=enabled
+          -Dglx=disabled
+          -Dplatforms=android
+          -Dllvm=disabled
+          -Dzlib=enabled
+          -Dshared-glapi=enabled
+          -Dshader-cache=enabled
+          -Dbuildtype=release
+          -Db_ndebug=true
+          -Dlibarchive=disabled
+          "
           }
           termux_step_post_get_source() {
           echo "Applying Termux compatibility fixes..."
           if [ -f "src/util/anon_file.c" ]; then
-          echo "Fixing anon_file.c..."
+          echo "Fixing anon_file.c paths..."
           sed -i 's|"/tmp/xdg-runtime-mesa-%ld"|"$PREFIX/tmp/xdg-runtime-mesa-%ld"|g' src/util/anon_file.c
           fi
           if [ -f "src/util/os_file.c" ]; then
           echo "Fix epoll os_file.c..."
-          sed -i '1i #include <sys/epoll.h>' src/util/os_file.c
+          grep -q "sys/epoll.h" src/util/os_file.c || sed -i '1i #include <sys/epoll.h>' src/util/os_file.c
           fi
           if [ -f "src/gallium/drivers/virgl/virgl_vtest_socket.c" ]; then
           echo "Fixing virgl socket path..."
           sed -i 's|/tmp/virgl.sock|$PREFIX/tmp/virgl.sock|g' src/gallium/drivers/virgl/virgl_vtest_socket.c
           fi
           }
-          HOOKEOF
+          EOF
 
       - name: Build Mesa package
         run: |
